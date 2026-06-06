@@ -361,19 +361,20 @@ async def select_language(callback_query):
     user_languages[user_id] = lang
     await callback_query.answer()
     
-    # Check subscription first
-    if not check_subscription(user_id):
+    # Check if user is member of mandatory channel
+    is_member = await check_mandatory_channel(user_id)
+    
+    if not is_member:
         channel_url = get_channel_url(MANDATORY_CHANNEL)
         buttons = get_subscription_buttons(lang, channel_url)
         await callback_query.message.edit_text(translate("need_channel", lang), reply_markup=buttons)
         return
     
-    if not await check_mandatory_channel(user_id):
-        channel_url = get_channel_url(MANDATORY_CHANNEL)
-        buttons = get_subscription_buttons(lang, channel_url)
-        await callback_query.message.edit_text(translate("need_channel", lang), reply_markup=buttons)
-        return
-
+    # User is member - automatically add subscription to database if not exists
+    if not check_subscription(user_id):
+        db.add_subscription(user_id)
+        logger.info(f"✅ Auto-added subscription for user {user_id}")
+    
     await callback_query.message.edit_text(translate("ask_code", lang))
 
 
@@ -385,19 +386,18 @@ async def check_subscription_callback(callback_query):
     user_languages[user_id] = lang
     await callback_query.answer()
     
-    # Check subscription
-    if not check_subscription(user_id):
+    # Check channel membership
+    is_member = await check_mandatory_channel(user_id)
+    if not is_member:
         channel_url = get_channel_url(MANDATORY_CHANNEL)
         buttons = get_subscription_buttons(lang, channel_url)
         await callback_query.message.edit_text(translate("need_channel", lang), reply_markup=buttons)
         return
     
-    # Check channel membership
-    if not await check_mandatory_channel(user_id):
-        channel_url = get_channel_url(MANDATORY_CHANNEL)
-        buttons = get_subscription_buttons(lang, channel_url)
-        await callback_query.message.edit_text(translate("need_channel", lang), reply_markup=buttons)
-        return
+    # User is channel member - automatically add subscription to database
+    if not check_subscription(user_id):
+        db.add_subscription(user_id)
+        logger.info(f"✅ Auto-added subscription for user {user_id}")
     
     # All checks passed
     await callback_query.message.edit_text(translate("already_member", lang), reply_markup=LANG_BUTTONS)
@@ -408,19 +408,20 @@ async def receive_code(message: Message):
     user_id = message.from_user.id
     user_lang = user_languages.get(user_id, "en")
     
-    # Check subscription first
-    if not check_subscription(user_id):
+    # Check if member of mandatory channel
+    is_member = await check_mandatory_channel(user_id)
+    
+    if not is_member:
         channel_url = get_channel_url(MANDATORY_CHANNEL)
         buttons = get_subscription_buttons(user_lang, channel_url)
         await message.answer(translate("need_channel", user_lang), reply_markup=buttons)
         return
     
-    if not await check_mandatory_channel(user_id):
-        channel_url = get_channel_url(MANDATORY_CHANNEL)
-        buttons = get_subscription_buttons(user_lang, channel_url)
-        await message.answer(translate("need_channel", user_lang), reply_markup=buttons)
-        return
-
+    # User is member - automatically add subscription to database if not exists
+    if not check_subscription(user_id):
+        db.add_subscription(user_id)
+        logger.info(f"✅ Auto-added subscription for user {user_id}")
+    
     code = message.text.strip() if message.text else ""
     if not code:
         await message.answer(translate("not_found", user_lang))
