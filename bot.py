@@ -36,6 +36,11 @@ TRANSLATIONS = {
         "ru": "Выберите язык:",
         "en": "Choose language:",
     },
+    "need_channel": {
+        "uz": "🔐 Botdan foydalanish uchun bizning kanalga a'zo bo'lishingiz kerak!\n\nKanalga azo bo'lganingizdan so'ng \"✅ Tekshirish\" tugmasini bosing.",
+        "ru": "🔐 Для использования бота вам необходимо подписаться на наш канал!\n\nПосле подписки нажмите кнопку \"✅ Проверить\".",
+        "en": "🔐 To use the bot, you need to subscribe to our channel!\n\nAfter subscribing, click the \"✅ Check\" button.",
+    },
     "need_join": {
         "uz": "Siz majburiy kanalga a'zo bo'lishingiz kerak:\n{}",
         "ru": "Вы должны подписаться на канал:\n{}",
@@ -51,6 +56,16 @@ TRANSLATIONS = {
         "ru": "Код не найден",
         "en": "Code not found",
     },
+    "need_subscription": {
+        "uz": "❌ Kechirasiz, sizning obuna muddati tugagan yoki hali faol emas.\n\nBot foydalanish uchun faol obuna zarur!",
+        "ru": "❌ Извините, ваша подписка истекла или еще не активна.\n\nДля использования бота требуется активная подписка!",
+        "en": "❌ Sorry, your subscription has expired or is not active yet.\n\nActive subscription required to use the bot!",
+    },
+    "already_member": {
+        "uz": "✅ Siz allaqachon kanalga a'zo! Tilni tanlang:",
+        "ru": "✅ Вы уже подписаны на канал! Выберите язык:",
+        "en": "✅ You are already subscribed! Choose language:",
+    },
 }
 
 LANG_BUTTONS = InlineKeyboardMarkup(inline_keyboard=[
@@ -62,6 +77,21 @@ LANG_BUTTONS = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 
+def get_subscription_buttons(lang: str, channel_url: str) -> InlineKeyboardMarkup:
+    """Create subscription verification buttons"""
+    sub_text = {
+        "uz": {"subscribe": "📺 Kanalga a'zo bo'lish", "check": "✅ Tekshirish"},
+        "ru": {"subscribe": "📺 Подписаться", "check": "✅ Проверить"},
+        "en": {"subscribe": "📺 Subscribe", "check": "✅ Check"},
+    }
+    texts = sub_text.get(lang, sub_text["en"])
+    
+    return InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text=texts["subscribe"], url=channel_url)],
+        [InlineKeyboardButton(text=texts["check"], callback_data=f"check_sub_{lang}")],
+    ])
+
+
 class MovieDatabase:
     def __init__(self, filename: str):
         self.connection = sqlite3.connect(filename, check_same_thread=False)
@@ -71,6 +101,14 @@ class MovieDatabase:
         with self.connection:
             self.connection.execute(
                 "CREATE TABLE IF NOT EXISTS movies (code TEXT PRIMARY KEY, file_id TEXT, caption TEXT, file_type TEXT)"
+            )
+            self.connection.execute(
+                """CREATE TABLE IF NOT EXISTS subscriptions (
+                   user_id INTEGER PRIMARY KEY, 
+                   is_active INTEGER DEFAULT 1,
+                   created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                   expires_at DATETIME
+                )"""
             )
 
     def save_movie(self, code: str, file_id: str, caption: str, file_type: str):
@@ -84,6 +122,46 @@ class MovieDatabase:
         cursor = self.connection.cursor()
         cursor.execute("SELECT file_id, caption, file_type FROM movies WHERE code = ?", (code.strip(),))
         return cursor.fetchone()
+
+    def add_subscription(self, user_id: int, expires_at: str = None):
+        with self.connection:
+            self.connection.execute(
+                "INSERT OR REPLACE INTO subscriptions (user_id, is_active, expires_at) VALUES (?, 1, ?)",
+                (user_id, expires_at),
+            )
+
+    def remove_subscription(self, user_id: int):
+        with self.connection:
+            self.connection.execute(
+                "UPDATE subscriptions SET is_active = 0 WHERE user_id = ?",
+                (user_id,),
+            )
+
+    def has_active_subscription(self, user_id: int) -> bool:
+        cursor = self.connection.cursor()
+        cursor.execute(
+            """SELECT 1 FROM subscriptions 
+               WHERE user_id = ? AND is_active = 1 
+               AND (expires_at IS NULL OR expires_at > datetime('now'))""",
+            (user_id,),
+        )
+        return cursor.fetchone() is not None
+
+    def get_all_subscribers(self):
+        cursor = self.connection.cursor()
+        cursor.execute(
+            """SELECT user_id, is_active, created_at, expires_at FROM subscriptions 
+               WHERE is_active = 1 ORDER BY created_at"""
+        )
+        return cursor.fetchall()
+
+    def get_subscriber_count(self):
+        cursor = self.connection.cursor()
+        cursor.execute(
+            """SELECT COUNT(*) FROM subscriptions WHERE is_active = 1 
+               AND (expires_at IS NULL OR expires_at > datetime('now'))"""
+        )
+        return cursor.fetchone()[0]
 
 
 db = MovieDatabase(DB_FILE)
@@ -100,6 +178,11 @@ async def check_mandatory_channel(user_id: int) -> bool:
     except Exception as error:
         logger.warning("Failed to verify membership for %s: %s", user_id, error)
         return False
+
+
+def check_subscription(user_id: int) -> bool:
+    """Check if user has active subscription"""
+    return db.has_active_subscription(user_id)
 
 
 def translate(key: str, lang: str) -> str:
@@ -166,6 +249,75 @@ Post qilgan yangi videolarni /list bilan tekshiring."""
     await message.answer(text)
 
 
+@dp.message(Command(commands=["addsub"]))
+async def cmd_addsub(message: Message):
+    """Add subscription for user: /addsub user_id [expires_at]"""
+    if message.from_user.id != ADMIN_USER_ID:
+        return
+    
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("❌ Foydalanish: /addsub user_id [YYYY-MM-DD]\n\nMisol: /addsub 123456789\nMisol (muddat bilan): /addsub 123456789 2025-12-31")
+        return
+    
+    try:
+        user_id = int(parts[1])
+        expires_at = parts[2] if len(parts) > 2 else None
+        db.add_subscription(user_id, expires_at)
+        await message.answer(f"✅ Obuna qo'shildi: {user_id}\nMuddat: {expires_at or 'Cheksiz'}")
+    except ValueError:
+        await message.answer("❌ User ID noto'g'ri")
+
+
+@dp.message(Command(commands=["remsub"]))
+async def cmd_remsub(message: Message):
+    """Remove subscription: /remsub user_id"""
+    if message.from_user.id != ADMIN_USER_ID:
+        return
+    
+    parts = message.text.split()
+    if len(parts) < 2:
+        await message.answer("❌ Foydalanish: /remsub user_id\n\nMisol: /remsub 123456789")
+        return
+    
+    try:
+        user_id = int(parts[1])
+        db.remove_subscription(user_id)
+        await message.answer(f"✅ Obuna bekor qilindi: {user_id}")
+    except ValueError:
+        await message.answer("❌ User ID noto'g'ri")
+
+
+@dp.message(Command(commands=["subslist"]))
+async def cmd_subslist(message: Message):
+    """List all active subscribers"""
+    if message.from_user.id != ADMIN_USER_ID:
+        return
+    
+    subscribers = db.get_all_subscribers()
+    if not subscribers:
+        await message.answer("📋 Hech qanday faol obunachi topilmadi")
+        return
+    
+    text = f"📋 Faol obunachi ({len(subscribers)} ta):\n\n"
+    for user_id, is_active, created_at, expires_at in subscribers:
+        status = "✅" if is_active else "❌"
+        expiry = f"Muddat: {expires_at}" if expires_at else "Cheksiz"
+        text += f"{status} ID: {user_id}\n   Yaratildi: {created_at}\n   {expiry}\n\n"
+    
+    await message.answer(text)
+
+
+@dp.message(Command(commands=["subscount"]))
+async def cmd_subscount(message: Message):
+    """Get active subscriber count"""
+    if message.from_user.id != ADMIN_USER_ID:
+        return
+    
+    count = db.get_subscriber_count()
+    await message.answer(f"📊 Faol obunachi: {count} ta")
+
+
 @dp.message(Command(commands=["clear"]))
 async def cmd_clear(message: Message):
     if message.from_user.id != ADMIN_USER_ID:
@@ -182,12 +334,46 @@ async def select_language(callback_query):
     user_languages[user_id] = lang
     await callback_query.answer()
     
+    # Check subscription first
+    if not check_subscription(user_id):
+        channel_url = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
+        buttons = get_subscription_buttons(lang, channel_url)
+        await callback_query.message.edit_text(translate("need_channel", lang), reply_markup=buttons)
+        return
+    
     if not await check_mandatory_channel(user_id):
-        invite_link = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
-        await callback_query.message.edit_text(translate("need_join", lang).format(invite_link))
+        channel_url = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
+        buttons = get_subscription_buttons(lang, channel_url)
+        await callback_query.message.edit_text(translate("need_channel", lang), reply_markup=buttons)
         return
 
     await callback_query.message.edit_text(translate("ask_code", lang))
+
+
+@dp.callback_query(F.data.startswith("check_sub_"))
+async def check_subscription_callback(callback_query):
+    """Check if user has subscribed and is member of channel"""
+    lang = callback_query.data.split("_")[2]
+    user_id = callback_query.from_user.id
+    user_languages[user_id] = lang
+    await callback_query.answer()
+    
+    # Check subscription
+    if not check_subscription(user_id):
+        channel_url = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
+        buttons = get_subscription_buttons(lang, channel_url)
+        await callback_query.message.edit_text(translate("need_channel", lang), reply_markup=buttons)
+        return
+    
+    # Check channel membership
+    if not await check_mandatory_channel(user_id):
+        channel_url = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
+        buttons = get_subscription_buttons(lang, channel_url)
+        await callback_query.message.edit_text(translate("need_channel", lang), reply_markup=buttons)
+        return
+    
+    # All checks passed
+    await callback_query.message.edit_text(translate("already_member", lang), reply_markup=LANG_BUTTONS)
 
 
 @dp.message()
@@ -195,9 +381,17 @@ async def receive_code(message: Message):
     user_id = message.from_user.id
     user_lang = user_languages.get(user_id, "en")
     
+    # Check subscription first
+    if not check_subscription(user_id):
+        channel_url = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
+        buttons = get_subscription_buttons(user_lang, channel_url)
+        await message.answer(translate("need_channel", user_lang), reply_markup=buttons)
+        return
+    
     if not await check_mandatory_channel(user_id):
-        invite_link = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
-        await message.answer(translate("need_join", user_lang).format(invite_link))
+        channel_url = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
+        buttons = get_subscription_buttons(user_lang, channel_url)
+        await message.answer(translate("need_channel", user_lang), reply_markup=buttons)
         return
 
     code = message.text.strip() if message.text else ""
