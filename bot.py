@@ -77,6 +77,33 @@ LANG_BUTTONS = InlineKeyboardMarkup(inline_keyboard=[
 ])
 
 
+def get_channel_url(channel: str) -> str:
+    """Convert channel identifier to proper Telegram link"""
+    if not channel:
+        return ""
+    
+    # If it starts with @, it's a username
+    if channel.startswith("@"):
+        return f"https://t.me/{channel.lstrip('@')}"
+    
+    # If it's a numeric ID starting with -100, convert to proper link
+    if channel.startswith("-100"):
+        channel_id = channel[4:]  # Remove -100 prefix
+        return f"https://t.me/c/{channel_id}/"
+    
+    # If it starts with -, it's an old format, try to convert
+    if channel.startswith("-"):
+        channel_id = channel[1:]
+        return f"https://t.me/c/{channel_id}/"
+    
+    # If it's just a number, assume it's a channel ID
+    if channel.isdigit():
+        return f"https://t.me/c/{channel}/"
+    
+    # Otherwise assume it's a username
+    return f"https://t.me/{channel}"
+
+
 def get_subscription_buttons(lang: str, channel_url: str) -> InlineKeyboardMarkup:
     """Create subscription verification buttons"""
     sub_text = {
@@ -336,13 +363,13 @@ async def select_language(callback_query):
     
     # Check subscription first
     if not check_subscription(user_id):
-        channel_url = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
+        channel_url = get_channel_url(MANDATORY_CHANNEL)
         buttons = get_subscription_buttons(lang, channel_url)
         await callback_query.message.edit_text(translate("need_channel", lang), reply_markup=buttons)
         return
     
     if not await check_mandatory_channel(user_id):
-        channel_url = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
+        channel_url = get_channel_url(MANDATORY_CHANNEL)
         buttons = get_subscription_buttons(lang, channel_url)
         await callback_query.message.edit_text(translate("need_channel", lang), reply_markup=buttons)
         return
@@ -360,14 +387,14 @@ async def check_subscription_callback(callback_query):
     
     # Check subscription
     if not check_subscription(user_id):
-        channel_url = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
+        channel_url = get_channel_url(MANDATORY_CHANNEL)
         buttons = get_subscription_buttons(lang, channel_url)
         await callback_query.message.edit_text(translate("need_channel", lang), reply_markup=buttons)
         return
     
     # Check channel membership
     if not await check_mandatory_channel(user_id):
-        channel_url = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
+        channel_url = get_channel_url(MANDATORY_CHANNEL)
         buttons = get_subscription_buttons(lang, channel_url)
         await callback_query.message.edit_text(translate("need_channel", lang), reply_markup=buttons)
         return
@@ -383,13 +410,13 @@ async def receive_code(message: Message):
     
     # Check subscription first
     if not check_subscription(user_id):
-        channel_url = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
+        channel_url = get_channel_url(MANDATORY_CHANNEL)
         buttons = get_subscription_buttons(user_lang, channel_url)
         await message.answer(translate("need_channel", user_lang), reply_markup=buttons)
         return
     
     if not await check_mandatory_channel(user_id):
-        channel_url = f"https://t.me/{MANDATORY_CHANNEL.lstrip('@')}" if MANDATORY_CHANNEL.startswith("@") else MANDATORY_CHANNEL
+        channel_url = get_channel_url(MANDATORY_CHANNEL)
         buttons = get_subscription_buttons(user_lang, channel_url)
         await message.answer(translate("need_channel", user_lang), reply_markup=buttons)
         return
