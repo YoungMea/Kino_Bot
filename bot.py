@@ -78,20 +78,22 @@ LANG_BUTTONS = InlineKeyboardMarkup(inline_keyboard=[
 
 
 def get_channel_url(channel: str) -> str:
-    """Convert channel identifier to proper Telegram link"""
+    """Convert channel identifier to proper Telegram link for mobile (uses deep links)"""
     if not channel:
         return ""
     
-    # If it starts with @, it's a username
+    # If it starts with @, use deep link format for direct Telegram app opening
     if channel.startswith("@"):
-        return f"https://t.me/{channel.lstrip('@')}"
+        username = channel.lstrip('@')
+        # Use tg:// deep link for direct app opening on mobile
+        return f"tg://resolve?domain={username}"
     
-    # If it's a numeric ID starting with -100, convert to proper link
+    # If it's a numeric ID, need to use https format (deep links don't work for private channels)
     if channel.startswith("-100"):
         channel_id = channel[4:]  # Remove -100 prefix
         return f"https://t.me/c/{channel_id}/"
     
-    # If it starts with -, it's an old format, try to convert
+    # If it starts with -, it's an old format
     if channel.startswith("-"):
         channel_id = channel[1:]
         return f"https://t.me/c/{channel_id}/"
@@ -100,8 +102,8 @@ def get_channel_url(channel: str) -> str:
     if channel.isdigit():
         return f"https://t.me/c/{channel}/"
     
-    # Otherwise assume it's a username
-    return f"https://t.me/{channel}"
+    # Otherwise assume it's a username - use deep link
+    return f"tg://resolve?domain={channel}"
 
 
 def get_subscription_buttons(lang: str, channel_url: str) -> InlineKeyboardMarkup:
