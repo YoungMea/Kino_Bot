@@ -82,28 +82,25 @@ def get_channel_url(channel: str) -> str:
     if not channel:
         return ""
     
-    # If it starts with @, use deep link format for direct Telegram app opening
-    if channel.startswith("@"):
-        username = channel.lstrip('@')
-        # Use tg:// deep link for direct app opening on mobile
-        return f"tg://resolve?domain={username}"
+    channel = channel.strip()
     
-    # If it's a numeric ID, need to use https format (deep links don't work for private channels)
+    # Agar raqamli ID bo'lsa (-100 bilan boshlanadigan yopiq kanal)
     if channel.startswith("-100"):
         channel_id = channel[4:]  # Remove -100 prefix
-        return f"https://t.me/c/{channel_id}/"
+        return f"https://t.me/c/{channel_id}/1"  # Oxiriga /1 qo'yilsa, t.me link ilovada yaxshi ochiladi
     
-    # If it starts with -, it's an old format
     if channel.startswith("-"):
         channel_id = channel[1:]
-        return f"https://t.me/c/{channel_id}/"
+        return f"https://t.me/c/{channel_id}/1"
+
+    # Agar ochiq kanal bo'lsa (username)
+    username = channel.lstrip('@') # @ belgisi bo'lsa ham, bo'lmasa ham tozalaydi
     
-    # If it's just a number, assume it's a channel ID
-    if channel.isdigit():
-        return f"https://t.me/c/{channel}/"
-    
-    # Otherwise assume it's a username - use deep link
-    return f"tg://resolve?domain={channel}"
+    if username.isdigit():
+        return f"https://t.me/c/{username}/1"
+        
+    # To'g'ridan-to'g'ri Telegram ilovasida ochiladigan deep link
+    return f"tg://resolve?domain={username}"
 
 
 def get_subscription_buttons(lang: str, channel_url: str) -> InlineKeyboardMarkup:
